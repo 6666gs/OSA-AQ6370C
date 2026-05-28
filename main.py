@@ -30,6 +30,8 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -78,18 +80,20 @@ class MainWindow(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
-        layout = QVBoxLayout()
-
-        # 配置 Matplotlib 中文字体
         self._ch_font_available = self._setup_matplotlib_font()
 
-        # --- 连接区域 ---
+        root = QVBoxLayout()
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(4)
+
+        # --- 连接栏（始终可见） ---
         conn_layout = QHBoxLayout()
         self.ip_edit = QLineEdit("192.168.100.176")
         self.port_edit = QLineEdit("10001")
         self.connect_btn = QPushButton("连接")
         self.disconnect_btn = QPushButton("断开")
         self.status_label = QLabel("未连接")
+        self.rst_checkbox = QCheckBox("连接时重置")
         conn_layout.addWidget(QLabel("IP:"))
         conn_layout.addWidget(self.ip_edit)
         conn_layout.addWidget(QLabel("Port:"))
@@ -97,93 +101,130 @@ class MainWindow(QWidget):
         conn_layout.addWidget(self.connect_btn)
         conn_layout.addWidget(self.disconnect_btn)
         conn_layout.addWidget(self.status_label)
-        self.rst_checkbox = QCheckBox("连接时重置")
+        conn_layout.addStretch()
         conn_layout.addWidget(self.rst_checkbox)
-        layout.addLayout(conn_layout)
+        root.addLayout(conn_layout)
 
-        # --- 设置区域 ---
-        settings_group = QGroupBox("设置")
-        settings_layout = QFormLayout()
+        # --- 标签页 ---
+        tabs = QTabWidget()
+        root.addWidget(tabs, 1)
+
+        # ---- 第一页：设置 ----
+        settings_page = QWidget()
+        sp_layout = QVBoxLayout(settings_page)
+        sp_layout.setContentsMargins(12, 12, 12, 12)
+        sp_layout.setSpacing(8)
+
+        settings_group = QGroupBox("参数设置")
+        form = QFormLayout()
+        form.setSpacing(8)
 
         self.scan_mode_combo = QComboBox()
         self.scan_mode_combo.addItems(["单次", "连续", "自动"])
-        settings_layout.addRow("扫描模式:", self.scan_mode_combo)
+        form.addRow("扫描模式:", self.scan_mode_combo)
 
         self.start_edit = QLineEdit("1540")
-        settings_layout.addRow("起始波长 (nm):", self.start_edit)
+        form.addRow("起始波长 (nm):", self.start_edit)
         self.start_error_label = QLabel("")
-        settings_layout.addRow("", self.start_error_label)
+        self.start_error_label.setStyleSheet("color: red;")
+        form.addRow("", self.start_error_label)
 
         self.stop_edit = QLineEdit("1560")
-        settings_layout.addRow("终止波长 (nm):", self.stop_edit)
+        form.addRow("终止波长 (nm):", self.stop_edit)
         self.stop_error_label = QLabel("")
-        settings_layout.addRow("", self.stop_error_label)
+        self.stop_error_label.setStyleSheet("color: red;")
+        form.addRow("", self.stop_error_label)
 
         self.resolution_edit = QLineEdit("0.02")
-        settings_layout.addRow("分辨率 (nm):", self.resolution_edit)
+        form.addRow("分辨率 (nm):", self.resolution_edit)
         self.resolution_error_label = QLabel("")
-        settings_layout.addRow("", self.resolution_error_label)
+        self.resolution_error_label.setStyleSheet("color: red;")
+        form.addRow("", self.resolution_error_label)
 
         self.pdiv_edit = QLineEdit("10")
-        settings_layout.addRow("纵轴每格刻度 (dB):", self.pdiv_edit)
+        form.addRow("纵轴每格刻度 (dB):", self.pdiv_edit)
 
         self.ylevel_edit = QLineEdit("-20")
-        settings_layout.addRow("参考高度线 (dBm):", self.ylevel_edit)
+        form.addRow("参考高度线 (dBm):", self.ylevel_edit)
 
         self.sensitivity_combo = QComboBox()
         self.sensitivity_combo.addItems([
             "NORM/AUTO", "NORM/HOLD", "NORM", "MID",
             "HIGH1", "HIGH2", "HIGH3",
         ])
-        settings_layout.addRow("灵敏度:", self.sensitivity_combo)
+        form.addRow("灵敏度:", self.sensitivity_combo)
 
         self.apply_btn = QPushButton("应用设置")
-        settings_layout.addRow(self.apply_btn)
-        settings_group.setLayout(settings_layout)
-        layout.addWidget(settings_group)
+        form.addRow(self.apply_btn)
 
-        # --- 捕获按钮 ---
-        capture_layout = QHBoxLayout()
+        settings_group.setLayout(form)
+        sp_layout.addWidget(settings_group)
+        sp_layout.addStretch(1)
+        tabs.addTab(settings_page, "设置")
+
+        # ---- 第二页：捕获与截图 ----
+        capture_page = QWidget()
+        cp_layout = QVBoxLayout(capture_page)
+        cp_layout.setContentsMargins(8, 8, 8, 8)
+        cp_layout.setSpacing(4)
+
+        # 操作按钮行
+        btn_row = QHBoxLayout()
         self.trace_edit = QLineEdit("TRA")
+        self.trace_edit.setMaximumWidth(70)
         self.capture_btn = QPushButton("捕获")
         self.save_btn = QPushButton("保存")
         self.screenshot_btn = QPushButton("截图")
-        capture_layout.addWidget(QLabel("迹线:"))
-        capture_layout.addWidget(self.trace_edit)
-        capture_layout.addWidget(self.capture_btn)
-        capture_layout.addWidget(self.save_btn)
-        capture_layout.addWidget(self.screenshot_btn)
-        layout.addLayout(capture_layout)
+        btn_row.addWidget(QLabel("迹线:"))
+        btn_row.addWidget(self.trace_edit)
+        btn_row.addWidget(self.capture_btn)
+        btn_row.addWidget(self.save_btn)
+        btn_row.addWidget(self.screenshot_btn)
+        btn_row.addStretch()
+        cp_layout.addLayout(btn_row)
 
-        # --- 主体区域 ---
-        main_layout = QHBoxLayout()
-        left_layout = QVBoxLayout()
+        # 主内容区（填满剩余空间）
+        content_row = QHBoxLayout()
+
+        # 左列：历史列表
+        left_col = QVBoxLayout()
         self.capture_list = QListWidget()
-        left_layout.addWidget(self.capture_list)
         self.clear_btn = QPushButton("清空")
-        left_layout.addWidget(self.clear_btn)
-        main_layout.addLayout(left_layout, 1)
+        left_col.addWidget(self.capture_list, 1)
+        left_col.addWidget(self.clear_btn, 0)
+        content_row.addLayout(left_col, 1)
 
-        right_layout = QVBoxLayout()
+        # 右列：图表/截图（用 QStackedWidget，切换时不改变尺寸）
+        self.right_stack = QStackedWidget()
+
+        canvas_widget = QWidget()
+        canvas_layout = QVBoxLayout(canvas_widget)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
         self.toolbar = NavigationToolbar(self.canvas, self)
-        right_layout.addWidget(self.canvas, 1)
-        right_layout.addWidget(self.toolbar, 0)
+        canvas_layout.addWidget(self.canvas, 1)
+        canvas_layout.addWidget(self.toolbar, 0)
+        self.right_stack.addWidget(canvas_widget)   # index 0
+
         self.screenshot_label = QLabel("截图预览区域")
         self.screenshot_label.setAlignment(Qt.AlignCenter)
         self.screenshot_label.setStyleSheet("border: 1px solid #ccc; background: #f5f5f5;")
-        self.screenshot_label.hide()
-        right_layout.addWidget(self.screenshot_label, 1)
-        main_layout.addLayout(right_layout, 5)
-        layout.addLayout(main_layout)
+        self.right_stack.addWidget(self.screenshot_label)  # index 1
 
-        # --- 日志窗口 ---
+        content_row.addWidget(self.right_stack, 5)
+        cp_layout.addLayout(content_row, 1)
+
+        # 日志（固定高度，不参与拉伸）
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        layout.addWidget(self.log_text)
+        self.log_text.setMinimumHeight(60)
+        self.log_text.setMaximumHeight(100)
+        cp_layout.addWidget(self.log_text, 0)
 
-        self.setLayout(layout)
+        tabs.addTab(capture_page, "捕获与截图")
+
+        self.setLayout(root)
 
         # --- 信号绑定 ---
         self.connect_btn.clicked.connect(self._on_connect)
@@ -198,7 +239,6 @@ class MainWindow(QWidget):
         self.clear_btn.clicked.connect(self._on_clear_captures)
         self.screenshot_btn.clicked.connect(self._on_screenshot)
 
-        # 重定向 print 输出到日志窗口
         sys.stdout = EmittingStream(self.log_text)
         sys.stderr = EmittingStream(self.log_text)
 
@@ -291,9 +331,7 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "采集失败", str(e))
 
     def _show_capture(self, x: Any, y: Any) -> None:
-        self.screenshot_label.hide()
-        self.canvas.show()
-        self.toolbar.show()
+        self.right_stack.setCurrentIndex(0)
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         ax.plot(x * 1e9, y)
@@ -313,8 +351,7 @@ class MainWindow(QWidget):
             self._show_capture(x, y)
 
     def _show_screenshot(self, filepath: str) -> None:
-        self.canvas.hide()
-        self.toolbar.hide()
+        self.right_stack.setCurrentIndex(1)
         pixmap = QPixmap(filepath)
         if not pixmap.isNull():
             scaled = pixmap.scaled(
@@ -323,7 +360,6 @@ class MainWindow(QWidget):
                 Qt.SmoothTransformation,
             )
             self.screenshot_label.setPixmap(scaled)
-        self.screenshot_label.show()
 
     def _on_save(self) -> None:
         if self.current_capture_idx is None:
@@ -361,9 +397,7 @@ class MainWindow(QWidget):
         self.figure.clear()
         self.canvas.draw()
         self.screenshot_label.clear()
-        self.screenshot_label.hide()
-        self.canvas.show()
-        self.toolbar.show()
+        self.right_stack.setCurrentIndex(0)
 
     def _on_screenshot(self) -> None:
         if not self.client:
@@ -492,6 +526,7 @@ class MainWindow(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = MainWindow()
-    win.resize(900, 600)
+    win.setMinimumSize(860, 560)
+    win.resize(1000, 680)
     win.show()
     sys.exit(app.exec_())
