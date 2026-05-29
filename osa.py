@@ -12,6 +12,10 @@ import time
 import numpy as np
 
 
+# operation 状态寄存器 bit0 = Sweep finished（扫描完成）
+SWEEP_FINISHED_BIT = 0b1
+
+
 class osa:
     '''
     yokogawa AQ6370B光谱仪
@@ -199,6 +203,29 @@ class osa:
         except Exception as e:
             self.close()
             raise e
+
+    def abort(self):
+        '''立即中止扫描'''
+        self.send(':ABORt\n')
+
+    def start_sweep(self):
+        '''按当前扫描模式启动/恢复扫描'''
+        self.send(':init\n')
+
+    def poll_sweep_finished(self):
+        '''读取并清除"扫描完成"事件；返回自上次读取以来是否完成过一次扫描'''
+        resp = self.query(':STATus:OPERation:EVENt?\n', print_cmd=False)
+        return bool(self._parse_int(resp) & SWEEP_FINISHED_BIT)
+
+    @staticmethod
+    def _parse_int(resp):
+        '''把 b'1\\r\\n' 这类响应安全转成 int；None / 解析失败返回 0'''
+        if resp is None:
+            return 0
+        try:
+            return int(resp.decode().strip())
+        except (ValueError, AttributeError):
+            return 0
 
     def close(self):
         self.sock.close()

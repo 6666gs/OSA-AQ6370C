@@ -15,7 +15,7 @@ from matplotlib.backends.backend_qt5agg import (
     NavigationToolbar2QT as NavigationToolbar,
 )
 from matplotlib.figure import Figure
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -53,6 +53,9 @@ SENSITIVITY_MAP = {
     6: "HIGH3",
 }
 
+PAUSE_POLL_INTERVAL_MS = 150     # "暂停"等待时的轮询间隔
+PAUSE_WAIT_TIMEOUT_MS = 60000    # 等待当前扫描完成的安全超时（兜底）
+
 
 class EmittingStream:
     """重定向 stdout/stderr 到 QTextEdit"""
@@ -77,6 +80,8 @@ class MainWindow(QWidget):
         self.current_capture_idx: int | None = None
         self._screenshot_dir: str = ""
         self._ch_font_available: bool = False
+        self._pause_timer: QTimer | None = None
+        self._pause_ticks: int = 0
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -170,6 +175,33 @@ class MainWindow(QWidget):
 
         # 操作按钮行
         btn_row = QHBoxLayout()
+
+        # 扫描控制按钮（绿=开始 / 琥珀=暂停 / 红=立即停止）
+        self.start_btn = QPushButton("开始扫描")
+        self.pause_btn = QPushButton("暂停")
+        self.stop_btn = QPushButton("立即停止")
+        self.start_btn.setStyleSheet(
+            "QPushButton{background:#2e7d32;color:white;font-weight:bold;"
+            "padding:4px 12px;border:none;border-radius:4px;}"
+            "QPushButton:hover{background:#388e3c;}"
+            "QPushButton:disabled{background:#a5d6a7;}"
+        )
+        self.pause_btn.setStyleSheet(
+            "QPushButton{background:#f0a000;color:white;font-weight:bold;"
+            "padding:4px 12px;border:none;border-radius:4px;}"
+            "QPushButton:hover{background:#ffb300;}"
+            "QPushButton:disabled{background:#ffe0a3;}"
+        )
+        self.stop_btn.setStyleSheet(
+            "QPushButton{background:#c62828;color:white;font-weight:bold;"
+            "padding:4px 12px;border:none;border-radius:4px;}"
+            "QPushButton:hover{background:#d32f2f;}"
+        )
+        btn_row.addWidget(self.start_btn)
+        btn_row.addWidget(self.pause_btn)
+        btn_row.addWidget(self.stop_btn)
+        btn_row.addSpacing(16)
+
         self.trace_edit = QLineEdit("TRA")
         self.trace_edit.setMaximumWidth(70)
         self.capture_btn = QPushButton("捕获")
@@ -238,6 +270,9 @@ class MainWindow(QWidget):
         self.stop_edit.textChanged.connect(self._validate_wavelength_range)
         self.clear_btn.clicked.connect(self._on_clear_captures)
         self.screenshot_btn.clicked.connect(self._on_screenshot)
+        self.start_btn.clicked.connect(self._on_start_sweep)
+        self.pause_btn.clicked.connect(self._on_pause)
+        self.stop_btn.clicked.connect(self._on_stop)
 
         sys.stdout = EmittingStream(self.log_text)
         sys.stderr = EmittingStream(self.log_text)
@@ -426,6 +461,75 @@ class MainWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "截图失败", str(e))
             self.status_label.setText("截图失败")
+
+    # ---- 扫描控制 ----
+
+    def _on_start_sweep(self) -> None:
+        if not self.client:
+            QMessageBox.warning(self, "错误", "请先连接设备")
+            return
+        try:
+            self.client.start_sweep()
+            self.status_label.setText("扫描中…")
+        except Exception as e:
+            QMessageBox.critical(self, "启动失败", str(e))
+
+    def _on_pause(self) -> None:
+        """完成当前扫描后停止：轮询扫描完成事件，扫完即 ABORt。"""
+        if not self.client:
+            QMessageBox.warning(self, "错误", "请先连接设备")
+            return
+        if self._pause_timer is not None:
+            return  # 已在等待中，避免重入
+        self.pause_btn.setEnabled(False)
+        self.status_label.setText("暂停中…（等待当前扫描完成）")
+        try:
+            self.client.poll_sweep_finished()  # 读一次，清除旧的锁存事件
+        except Exception as e:
+            self.pause_btn.setEnabled(True)
+            self.status_label.setText("暂停失败")
+            QMessageBox.critical(self, "暂停失败", str(e))
+            return
+        self._pause_ticks = 0
+        self._pause_timer = QTimer(self)
+        self._pause_timer.timeout.connect(self._poll_pause)
+        self._pause_timer.start(PAUSE_POLL_INTERVAL_MS)
+
+    def _poll_pause(self) -> None:
+        if not self.client:
+            self._finish_pause("已断开，暂停取消")
+            return
+        self._pause_ticks += 1
+        try:
+            if self.client.poll_sweep_finished():
+                self.client.abort()
+                self._finish_pause("已暂停")
+                return
+            if self._pause_ticks * PAUSE_POLL_INTERVAL_MS >= PAUSE_WAIT_TIMEOUT_MS:
+                self.client.abort()
+                self._finish_pause("已暂停（超时）")
+        except Exception as e:
+            self._finish_pause("暂停出错")
+            QMessageBox.critical(self, "暂停出错", str(e))
+
+    def _on_stop(self) -> None:
+        """立即停止：直接 ABORt，并打断可能正在进行的"暂停"等待。"""
+        if not self.client:
+            QMessageBox.warning(self, "错误", "请先连接设备")
+            return
+        try:
+            self.client.abort()
+            self._finish_pause("已停止")
+        except Exception as e:
+            QMessageBox.critical(self, "停止失败", str(e))
+
+    def _finish_pause(self, message: str) -> None:
+        """收尾：停止并清除定时器、恢复暂停按钮、更新状态栏。"""
+        if self._pause_timer is not None:
+            self._pause_timer.stop()
+            self._pause_timer = None
+        self.pause_btn.setEnabled(True)
+        self.status_label.setText(message)
 
     # ---- 设置 ----
 
