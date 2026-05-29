@@ -373,6 +373,8 @@ class MainWindow(QWidget):
         ax.set_xlabel("Wavelength (nm)")
         ax.set_ylabel("Power (dBm)")
         ax.set_title("光谱图" if self._ch_font_available else "Spectrum")
+        y_max = max(float(y.max()), -80.0) + 5
+        ax.set_ylim(-80, y_max)
         self.canvas.draw()
 
     def _on_capture_selected(self, item: QListWidget) -> None:
