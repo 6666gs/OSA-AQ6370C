@@ -18,6 +18,7 @@ from matplotlib.figure import Figure
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -37,6 +38,12 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from capture_io import (
+    copy_screenshot,
+    resolve_unique_path,
+    sanitize_filename,
+    write_spectrum_csv,
+)
 from osa import osa
 
 ALLOWED_RESOLUTIONS = [2.0, 1.0, 0.5, 0.2, 0.1, 0.05, 0.02]
@@ -206,11 +213,14 @@ class MainWindow(QWidget):
         self.trace_edit.setMaximumWidth(70)
         self.capture_btn = QPushButton("捕获")
         self.save_btn = QPushButton("保存")
+        self.save_all_btn = QPushButton("批量保存")
+        self.save_all_btn.setToolTip("保存所选条目；未选中任何条目时保存全部")
         self.screenshot_btn = QPushButton("截图")
         btn_row.addWidget(QLabel("迹线:"))
         btn_row.addWidget(self.trace_edit)
         btn_row.addWidget(self.capture_btn)
         btn_row.addWidget(self.save_btn)
+        btn_row.addWidget(self.save_all_btn)
         btn_row.addWidget(self.screenshot_btn)
         btn_row.addStretch()
         cp_layout.addLayout(btn_row)
@@ -221,6 +231,7 @@ class MainWindow(QWidget):
         # 左列：历史列表
         left_col = QVBoxLayout()
         self.capture_list = QListWidget()
+        self.capture_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.clear_btn = QPushButton("清空")
         left_col.addWidget(self.capture_list, 1)
         left_col.addWidget(self.clear_btn, 0)
@@ -263,6 +274,7 @@ class MainWindow(QWidget):
         self.disconnect_btn.clicked.connect(self._on_disconnect)
         self.capture_btn.clicked.connect(self._on_capture)
         self.save_btn.clicked.connect(self._on_save)
+        self.save_all_btn.clicked.connect(self._on_save_all)
         self.capture_list.itemClicked.connect(self._on_capture_selected)
         self.apply_btn.clicked.connect(self._on_apply_settings)
         self.resolution_edit.textChanged.connect(self._validate_resolution)
@@ -404,28 +416,68 @@ class MainWindow(QWidget):
             return
         entry = self.captures[self.current_capture_idx]
         if entry["type"] == "screenshot":
-            src = entry["data"]
             path, _ = QFileDialog.getSaveFileName(
                 self, "保存截图", "", "BMP Files (*.bmp);;All Files (*)"
             )
             if path:
                 try:
-                    with open(src, "rb") as fin, open(path, "wb") as fout:
-                        fout.write(fin.read())
+                    copy_screenshot(entry["data"], path)
                     QMessageBox.information(self, "保存成功", f"截图已保存到 {path}")
                 except Exception as e:
                     QMessageBox.critical(self, "保存失败", str(e))
         else:
-            x, y = entry["data"]
             path, _ = QFileDialog.getSaveFileName(self, "保存数据", "", "CSV Files (*.csv)")
             if path:
                 try:
-                    with open(path, "w") as f:
-                        for xi, yi in zip(x, y):
-                            f.write(f"{xi},{yi}\n")
+                    x, y = entry["data"]
+                    write_spectrum_csv(x, y, path)
                     QMessageBox.information(self, "保存成功", f"数据已保存到 {path}")
                 except Exception as e:
                     QMessageBox.critical(self, "保存失败", str(e))
+
+    def _on_save_all(self) -> None:
+        """批量保存：有选中则存选中的，否则存全部；只选一次目录，自动命名。"""
+        if not self.captures:
+            QMessageBox.warning(self, "错误", "没有可保存的数据")
+            return
+
+        selected_rows = sorted(idx.row() for idx in self.capture_list.selectedIndexes())
+        rows = selected_rows if selected_rows else list(range(len(self.captures)))
+
+        directory = QFileDialog.getExistingDirectory(self, "选择保存目录")
+        if not directory:
+            return
+
+        used: set[str] = set()
+        saved = 0
+        failures: list[str] = []
+        for row in rows:
+            entry = self.captures[row]
+            base = sanitize_filename(entry["name"])
+            try:
+                if entry["type"] == "screenshot":
+                    path = resolve_unique_path(directory, base, ".bmp", used)
+                    copy_screenshot(entry["data"], path)
+                else:
+                    path = resolve_unique_path(directory, base, ".csv", used)
+                    x, y = entry["data"]
+                    write_spectrum_csv(x, y, path)
+                saved += 1
+            except Exception as e:
+                failures.append(f"{entry['name']}: {e}")
+
+        self._report_batch_save(directory, saved, failures)
+
+    def _report_batch_save(
+        self, directory: str, saved: int, failures: list[str]
+    ) -> None:
+        """弹出批量保存结果汇总。"""
+        summary = f"成功保存 {saved} 个到\n{directory}"
+        if failures:
+            summary += f"\n\n失败 {len(failures)} 个：\n" + "\n".join(failures)
+            QMessageBox.warning(self, "批量保存完成（部分失败）", summary)
+        else:
+            QMessageBox.information(self, "批量保存完成", summary)
 
     def _on_clear_captures(self) -> None:
         self.captures.clear()
